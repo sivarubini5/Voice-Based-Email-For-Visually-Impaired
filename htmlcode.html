@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Sender</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/annyang/2.6.1/annyang.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-image: url('https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSZpqRB_a3aEn5K-5e9ewXr1VBbnl_oc6FO58o8sE4s3NgzbH9n8h_p8IXVkvRIIHQdhK4&usqp=CAU');
+            background-size: cover;
+            background-position: center;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: #fff;
+        }
+
+        h1 {
+            color: #fff;
+            text-shadow: 2px 2px 4px #000;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: rgba(255, 255, 255, 0.8);
+            color: black;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            width: 80%;
+            max-width: 600px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>Speak to Compose Email</h1>
+    <div id="status">Start by saying: "Set recipient to [spell letters of first part of your email]"</div>
+
+    <script>
+        function speak(text) {
+            const synth = window.speechSynthesis;
+            const utterance = new SpeechSynthesisUtterance(text);
+            synth.speak(utterance);
+        }
+
+        function setupObserver() {
+            const statusElement = document.getElementById('status');
+            const observer = new MutationObserver(mutations => {
+                mutations.forEach(mutation => {
+                    if (mutation.type === 'characterData' || mutation.type === 'childList') {
+                        speak(mutation.target.textContent);
+                    }
+                });
+            });
+
+            observer.observe(statusElement, {
+                characterData: true,
+                childList: true,
+                subtree: true
+            });
+
+            speak(statusElement.innerText); // Speak initial content
+        }
+
+        function sendEmailData(emailData, delay = 0) {
+            setTimeout(() => {
+                document.getElementById('status').innerText = "Sending email...";
+                fetch('/send_email', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(emailData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('status').innerText = "Email sent successfully!";
+                    } else {
+                        document.getElementById('status').innerText = "Failed to send email: " + data.message;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('status').innerText = "Network error: " + error.message;
+                });
+            }, delay);
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (annyang) {
+                annyang.debug(true);
+                setupObserver();
+
+                let emailData = {
+                    recipient: '',
+                    subject: '',
+                    body: '',
+                    stage: 'recipient'
+                };
+
+                const commands = {
+                    'confirm *response': function(response) {
+                        let normalizedResponse = response.toLowerCase().trim();
+                        if (normalizedResponse.includes("yes")) {
+                            if (emailData.stage === 'recipient') {
+                                emailData.stage = 'subject';
+                                document.getElementById('status').innerText = "Recipient confirmed. Now, say 'subject is [your subject]'.";
+                            } else if (emailData.stage === 'subject') {
+                                emailData.stage = 'body';
+                                document.getElementById('status').innerText = "Subject confirmed. Now, say 'body is [your message]'.";
+                            } else if (emailData.stage === 'body') {
+                                emailData.stage = 'send';
+                                document.getElementById('status').innerText = "Body confirmed. Say 'send email now' to send the email immediately or 'send email later at [date and time]' to schedule like send email later at 2nd of May, 2024 at 10:30 AM";
+                            }
+                        } else if (normalizedResponse.includes("no")) {
+                            document.getElementById('status').innerText = "Canceled. Please start again.";
+                        } else {
+                            document.getElementById('status').innerText = "Please say 'confirm yes' to confirm or 'confirm no' to re-enter.";
+                        }
+                    },
+                    'set recipient to *data': function(data) {
+                        emailData.recipient = data.toLowerCase().replace(/[\s,.]/g, '') + "@gmail.com";
+                        document.getElementById('status').innerText = "Is this the correct recipient: " + emailData.recipient + "? Say 'confirm yes' to confirm or 'confirm no' to re-enter.";
+                    },
+                    'subject is *data': function(data) {
+                        emailData.subject = data;
+                        document.getElementById('status').innerText = "Is this the correct subject: " + data + "? Say 'confirm yes' to confirm or 'confirm no' to re-enter.";
+                    },
+                    'body is *data': function(data) {
+                        emailData.body = data;
+                        document.getElementById('status').innerText = "Is this the correct body: " + data + "? Say 'confirm yes' to confirm or 'confirm no' to re-enter.";
+                    },
+                    'Send e-mail now.': function() {
+                        if (emailData.stage === 'send') {
+                            sendEmailData(emailData);
+                        } else {
+                            document.getElementById('status').innerText = "Please complete all steps before sending.";
+                        }
+                    },
+                    'Send e-mail later at *dateTime': function(dateTime) {
+                        const match = dateTime.match(/(\d{1,2})(?:st|nd|rd|th)? of (\w+),? (\d{4}) at (\d{1,2}):(\d{2}) (AM|PM)/i);
+                        if (match && emailData.stage === 'send') {
+                            const date = new Date(`${match[2]} ${match[1]}, ${match[3]} ${match[4]}:${match[5]} ${match[6]}`);
+                            const now = new Date();
+                            const delay = date.getTime() - now.getTime();
+                            if (delay > 0) {
+                                sendEmailData(emailData, delay);
+                                document.getElementById('status').innerText = "Email scheduled for: " + date.toString();
+                            } else {
+                                document.getElementById('status').innerText = "Invalid time. Please ensure it's a future date and time.";
+                            }
+                        } else {
+                            document.getElementById('status').innerText = "Please specify the exact date and time to send the email.";
+                        }
+                    }
+                };
+
+                annyang.addCommands(commands);
+                annyang.start({ continuous: true });
+            } else {
+                document.getElementById('status').innerText = "Speech recognition not available.";
+                speak("Speech recognition not available.");
+            }
+        });
+    </script>
+</body>
+</html>
